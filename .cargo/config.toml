@@ -1,0 +1,5 @@
+[build]
+jobs = 2          # cap parallel codegen units — prevents OOM on 8 GB RAM
+
+[profile.dev]
+debug = 1         # line numbers only, no full DWARF — halves debuginfo RAM cost

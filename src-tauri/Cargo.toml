@@ -1,0 +1,20 @@
+[package]
+name = "mouse-wobbler"
+version = "0.1.0"
+description = "Mouse Wobbler – keep your session alive"
+authors = []
+edition = "2021"
+
+[lib]
+name = "mouse_wobbler_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+mouse-wobbler-core = { path = "../core" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde_json = "1"
+enigo = { version = "0.2", default-features = true }

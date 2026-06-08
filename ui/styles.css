@@ -1,0 +1,324 @@
+/* ── Reset & base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f1117;
+  --surface:   #1a1d27;
+  --surface2:  #22263a;
+  --border:    #2e3347;
+  --accent:    #4f8ef7;
+  --accent-h:  #6aa3ff;
+  --accent-d:  #3a72d4;
+  --red:       #e05252;
+  --green:     #4caf7d;
+  --text:      #e8eaf0;
+  --muted:     #7b82a0;
+  --radius:    12px;
+  --radius-sm: 8px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  user-select: none;
+  overflow-x: hidden;
+}
+
+/* ── Layout ────────────────────────────────────────────────────────────────── */
+.app {
+  padding: 16px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100vh;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+.header-icon { font-size: 22px; }
+h1 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+}
+
+/* ── Error banner ──────────────────────────────────────────────────────────── */
+.error-banner {
+  background: #3a1a1a;
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: #f08080;
+  line-height: 1.45;
+}
+.hidden { display: none !important; }
+
+/* ── Cards ─────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ── Status card ────────────────────────────────────────────────────────────── */
+.status-card { padding: 12px 16px; }
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.status-dot-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.dot-inactive { background: var(--muted); }
+.dot-wobbling {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.dot-auto {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.65; transform: scale(1.2); }
+}
+
+.idle-display {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Main toggle button ─────────────────────────────────────────────────────── */
+.main-btn {
+  width: 100%;
+  padding: 11px;
+  border-radius: var(--radius-sm);
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+  background: var(--accent);
+  color: #fff;
+  letter-spacing: 0.2px;
+}
+.main-btn:hover { background: var(--accent-h); }
+.main-btn:active { transform: scale(0.98); }
+.main-btn.active {
+  background: var(--red);
+}
+.main-btn.active:hover { background: #e87070; }
+
+/* ── Toggle switch ──────────────────────────────────────────────────────────── */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute;
+  inset: 0;
+  background: var(--surface2);
+  border-radius: 22px;
+  cursor: pointer;
+  transition: background 0.25s;
+  border: 1px solid var(--border);
+}
+.slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 2px;
+  top: 2px;
+  background: var(--muted);
+  border-radius: 50%;
+  transition: transform 0.25s, background 0.25s;
+}
+.toggle input:checked + .slider { background: var(--accent); border-color: var(--accent-d); }
+.toggle input:checked + .slider::before {
+  transform: translateX(18px);
+  background: #fff;
+}
+
+/* ── Slider settings ─────────────────────────────────────────────────────────── */
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.setting-row label {
+  width: 72px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.slider-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+input[type="range"] {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--surface2);
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent-d);
+  transition: background 0.2s;
+}
+input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-h); }
+
+/* Editable value input that sits beside each slider. */
+.val-input {
+  width: 56px;
+  flex-shrink: 0;
+  padding: 5px 6px;
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.2s, color 0.2s;
+  -moz-appearance: textfield;
+}
+.val-input:focus {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Hide the spinner arrows for a cleaner, themed look. */
+.val-input::-webkit-outer-spin-button,
+.val-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.unit {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 22px;
+  text-align: left;
+}
+
+/* ── Shortcut ────────────────────────────────────────────────────────────────── */
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shortcut-display {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s, color 0.2s;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+}
+.shortcut-display:focus,
+.shortcut-display.recording {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.shortcut-display.has-value {
+  color: var(--text);
+}
+
+.shortcut-key {
+  display: inline-block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 12px;
+  margin: 0 2px;
+  font-family: monospace;
+}
+
+.clear-btn {
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  transition: color 0.2s, border-color 0.2s;
+}
+.clear-btn:hover { color: var(--red); border-color: var(--red); }
+
+.hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: -4px;
+}

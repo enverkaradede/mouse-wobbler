@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mouse Wobbler</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header>
+      <div class="header-icon">🖱️</div>
+      <h1>Mouse Wobbler</h1>
+    </header>
+
+    <!-- Error banner -->
+    <div id="error-banner" class="error-banner hidden">
+      <span id="error-text"></span>
+    </div>
+
+    <!-- Status card -->
+    <div class="card status-card">
+      <div class="status-row">
+        <div class="status-dot-wrap">
+          <span id="status-dot" class="dot dot-inactive"></span>
+          <span id="status-label">Inactive</span>
+        </div>
+        <div id="idle-display" class="idle-display">Idle: 0s</div>
+      </div>
+    </div>
+
+    <!-- Manual toggle -->
+    <div class="card">
+      <div class="card-title">Manual Control</div>
+      <button id="main-btn" class="main-btn" onclick="handleMainBtn()">
+        Start Wobbling
+      </button>
+    </div>
+
+    <!-- Auto mode -->
+    <div class="card">
+      <div class="card-title">
+        Auto Mode
+        <label class="toggle">
+          <input type="checkbox" id="auto-mode-toggle" onchange="handleAutoModeChange()" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label>Start after idle</label>
+        <div class="slider-group">
+          <input type="range" id="idle-threshold" min="5" max="600" step="5" value="60"
+            oninput="handleIdleThreshold(this.value)" />
+          <input type="number" id="idle-threshold-input" class="val-input" min="5" max="600" step="5" value="60"
+            onchange="handleIdleInput(this.value)" />
+          <span class="unit">s</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wobble settings -->
+    <div class="card">
+      <div class="card-title">Wobble Settings</div>
+      <div class="setting-row">
+        <label>Interval</label>
+        <div class="slider-group">
+          <input type="range" id="wobble-interval" min="200" max="5000" step="100" value="1000"
+            oninput="handleInterval(this.value)" />
+          <input type="number" id="wobble-interval-input" class="val-input" min="200" max="5000" step="100" value="1000"
+            onchange="handleIntervalInput(this.value)" />
+          <span class="unit">ms</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>Radius</label>
+        <div class="slider-group">
+          <input type="range" id="wobble-radius" min="1" max="50" step="1" value="5"
+            oninput="handleRadius(this.value)" />
+          <input type="number" id="wobble-radius-input" class="val-input" min="1" max="50" step="1" value="5"
+            onchange="handleRadiusInput(this.value)" />
+          <span class="unit">px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Keyboard shortcut -->
+    <div class="card">
+      <div class="card-title">Keyboard Shortcut</div>
+      <div class="shortcut-row">
+        <div id="shortcut-display" class="shortcut-display" tabindex="0"
+          onclick="startRecording()"
+          onkeydown="captureShortcut(event)"
+          onblur="stopRecording()">
+          Click to set shortcut…
+        </div>
+        <button class="clear-btn" onclick="clearShortcut()">✕</button>
+      </div>
+      <p id="shortcut-hint" class="hint">Press a key combo while the field is focused.</p>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
