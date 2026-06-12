@@ -11,6 +11,12 @@ pub struct WobblerSettings {
     pub wobble_interval_ms: u64,
     pub wobble_radius: i32,
     pub auto_mode: bool,
+    /// When auto mode raises the wobble after the idle threshold, also raise the
+    /// privacy curtain (only if a curtain password is set). `serde(default)` keeps
+    /// older persisted settings files — written before this field existed —
+    /// loadable instead of failing deserialization and resetting to defaults.
+    #[serde(default)]
+    pub curtain_auto_arm: bool,
 }
 
 impl Default for WobblerSettings {
@@ -20,6 +26,7 @@ impl Default for WobblerSettings {
             wobble_interval_ms: 1000,
             wobble_radius: 5,
             auto_mode: false,
+            curtain_auto_arm: false,
         }
     }
 }
@@ -253,6 +260,7 @@ mod tests {
         assert_eq!(s.wobble_interval_ms, 1000);
         assert_eq!(s.wobble_radius, 5);
         assert!(!s.auto_mode);
+        assert!(!s.curtain_auto_arm);
     }
 
     #[test]
@@ -262,6 +270,7 @@ mod tests {
             wobble_interval_ms: 500,
             wobble_radius: 8,
             auto_mode: true,
+            curtain_auto_arm: true,
         };
         let parsed: WobblerSettings =
             serde_json::from_str(&serde_json::to_string(&orig).unwrap()).unwrap();
@@ -269,6 +278,24 @@ mod tests {
         assert_eq!(parsed.wobble_interval_ms, 500);
         assert_eq!(parsed.wobble_radius, 8);
         assert!(parsed.auto_mode);
+        assert!(parsed.curtain_auto_arm);
+    }
+
+    #[test]
+    fn settings_without_curtain_field_deserialises_to_default() {
+        // Regression: a settings.json written before `curtain_auto_arm` existed
+        // must still load (serde(default)) rather than failing and wiping the
+        // user's saved configuration.
+        let legacy = r#"{
+            "idle_threshold_secs": 30,
+            "wobble_interval_ms": 750,
+            "wobble_radius": 12,
+            "auto_mode": true
+        }"#;
+        let parsed: WobblerSettings = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.idle_threshold_secs, 30);
+        assert!(parsed.auto_mode);
+        assert!(!parsed.curtain_auto_arm, "missing field must default to false");
     }
 
     // ── tick() ─────────────────────────────────────────────────────────────────

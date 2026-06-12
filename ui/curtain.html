@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Locked</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="curtain-body">
+  <div class="curtain">
+    <div class="curtain-icon">🔒</div>
+    <h1 class="curtain-title">Screen Covered</h1>
+    <p class="curtain-sub">Enter your curtain password to return.</p>
+
+    <form id="unlock-form" class="curtain-form" autocomplete="off">
+      <input
+        id="password"
+        class="curtain-input"
+        type="password"
+        placeholder="Password"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button type="submit" class="curtain-btn">Unlock</button>
+    </form>
+
+    <p id="error" class="curtain-error" role="alert"></p>
+  </div>
+
+  <script src="curtain.js"></script>
+</body>
+</html>

@@ -1,13 +1,19 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
 use enigo::{Coordinate, Enigo, Mouse, Settings as EnigoSettings};
 use mouse_wobbler_core::{tick, AppStatus, SharedCore, WobblerCore, WobblerSettings};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Runtime, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size,
+    State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_store::StoreExt;
 
@@ -58,6 +64,220 @@ fn save_settings<R: Runtime>(app: &AppHandle<R>, settings: &WobblerSettings) {
     }
 }
 
+// ─── Privacy Curtain ──────────────────────────────────────────────────────────
+// A full-screen, always-on-top cover with an app-set password to dismiss. It is
+// a PRIVACY CURTAIN, not a system lock: a userspace window cannot block
+// Ctrl+Alt+Del, a remote shell, or a force-quit, and it disappears if the
+// process dies. It raises the bar against a passer-by while the wobbler keeps
+// the session awake — nothing more. The honest framing lives in the UI too.
+
+const CURTAIN_KEY: &str = "curtain_password_hash";
+const CURTAIN_LABEL_PREFIX: &str = "curtain-";
+
+/// Tracks whether the curtain is currently raised. Kept in the Tauri layer (not
+/// the pure core) because it owns no wobble logic — it only gates window spawning
+/// and unlock. Atomic so the tray thread and command handlers share it lock-free.
+#[derive(Default)]
+struct CurtainState {
+    armed: AtomicBool,
+    /// The `is_manual` value to restore when the curtain comes down, captured at
+    /// arm time. Manual arming forces wobbling on so the session stays awake while
+    /// covered; without this snapshot that forced state would persist after
+    /// unlock and the user could no longer reclaim the cursor by moving it.
+    restore_manual: AtomicBool,
+}
+
+/// Put the wobble state back to what it was before the curtain was raised. When
+/// the prior state was non-manual we also clear the active wobble so the cursor
+/// stops and auto/idle logic takes over cleanly — otherwise a forced manual
+/// wobble would linger and refuse to cede control to the returning user.
+fn restore_wobble_after_curtain(core: &SharedCore, curtain: &CurtainState) {
+    let restore_manual = curtain.restore_manual.load(Ordering::SeqCst);
+    let mut c = core.lock().unwrap();
+    c.is_manual = restore_manual;
+    if !restore_manual {
+        c.is_wobbling = false;
+        c.anchor_pos = None;
+        c.expected_pos = None;
+    }
+}
+
+/// Read the stored Argon2id PHC hash string, or `None` if no password is set.
+fn load_password_hash<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    let store = app.store(SETTINGS_STORE).ok()?;
+    store.get(CURTAIN_KEY)?.as_str().map(str::to_string)
+}
+
+/// Write (or, with `None`, delete) the stored password hash. The PHC string
+/// already embeds its own random salt and params, so no separate salt field is
+/// needed. Plaintext never reaches the store.
+fn store_password_hash<R: Runtime>(app: &AppHandle<R>, hash: Option<&str>) -> Result<(), String> {
+    let store = app.store(SETTINGS_STORE).map_err(|e| e.to_string())?;
+    match hash {
+        Some(h) => store.set(CURTAIN_KEY, serde_json::Value::String(h.to_string())),
+        None => {
+            store.delete(CURTAIN_KEY);
+        }
+    }
+    store.save().map_err(|e| e.to_string())
+}
+
+/// Cover every monitor with its own borderless, always-on-top window positioned
+/// in physical pixels so mixed-DPI multi-monitor setups line up exactly. Each
+/// window refuses every close request — only a verified unlock tears it down.
+fn spawn_curtain_windows<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    // Monitor enumeration needs a window context; the main window always exists
+    // (it only ever hides to tray, never gets destroyed).
+    let anchor = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window unavailable".to_string())?;
+    let monitors = anchor.available_monitors().map_err(|e| e.to_string())?;
+    if monitors.is_empty() {
+        return Err("no monitors detected".into());
+    }
+
+    for (index, monitor) in monitors.iter().enumerate() {
+        let label = format!("{CURTAIN_LABEL_PREFIX}{index}");
+        if app.get_webview_window(&label).is_some() {
+            continue; // already covering this monitor
+        }
+
+        let window =
+            WebviewWindowBuilder::new(app, &label, WebviewUrl::App("curtain.html".into()))
+                .title("")
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .visible(false)
+                .build()
+                .map_err(|e| e.to_string())?;
+
+        let pos = monitor.position();
+        let size = monitor.size();
+        window
+            .set_position(Position::Physical(PhysicalPosition { x: pos.x, y: pos.y }))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(Size::Physical(PhysicalSize {
+                width: size.width,
+                height: size.height,
+            }))
+            .map_err(|e| e.to_string())?;
+        window.set_always_on_top(true).map_err(|e| e.to_string())?;
+
+        // Block every close path (Cmd+W, window manager, etc.); the curtain may
+        // only come down via unlock_curtain → destroy().
+        window.on_window_event(move |event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+            }
+        });
+
+        window.show().map_err(|e| e.to_string())?;
+        // Span every virtual desktop only after the window is realised so its
+        // native handle exists (the Windows pin needs a valid HWND).
+        cover_all_desktops(&window);
+        if index == 0 {
+            window.set_focus().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Make a curtain window span every virtual desktop / Space the OS offers, so
+/// switching desktops can't expose the screen behind it.
+///
+/// macOS has a clean public API (CanJoinAllSpaces). Windows has none — pinning to
+/// all virtual desktops goes through undocumented shell internals, wrapped here by
+/// the `winvd` crate. Both calls are best-effort: a failure degrades to "covers
+/// the current desktop only" rather than breaking the curtain, so a Windows
+/// feature update that breaks the undocumented path can never leave the screen
+/// uncovered on the active desktop.
+fn cover_all_desktops<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    // No-op on Windows in tao; real behaviour on macOS/Linux.
+    if let Err(err) = window.set_visible_on_all_workspaces(true) {
+        eprintln!("curtain: set_visible_on_all_workspaces failed: {err}");
+    }
+
+    #[cfg(target_os = "windows")]
+    pin_to_all_virtual_desktops_windows(window);
+}
+
+/// Pin a window to every Windows virtual desktop via `winvd`. Tauri's `HWND`
+/// comes from a different `windows`-crate version than `winvd`'s, so the handle is
+/// bridged through its raw pointer. Undocumented and version-sensitive — failures
+/// are logged, never propagated.
+#[cfg(target_os = "windows")]
+fn pin_to_all_virtual_desktops_windows<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    use windows::Win32::Foundation::HWND;
+    match window.hwnd() {
+        Ok(handle) => {
+            let hwnd = HWND(handle.0);
+            if let Err(err) = winvd::pin_window(hwnd) {
+                eprintln!("curtain: pin to all virtual desktops failed: {err:?}");
+            }
+        }
+        Err(err) => eprintln!("curtain: could not resolve HWND for pinning: {err}"),
+    }
+}
+
+/// Tear down all curtain windows. Uses `destroy()` — not `close()` — to bypass
+/// the prevent-close guard installed above.
+fn close_curtain_windows<R: Runtime>(app: &AppHandle<R>) {
+    for (label, window) in app.webview_windows() {
+        if label.starts_with(CURTAIN_LABEL_PREFIX) {
+            if let Err(err) = window.destroy() {
+                eprintln!("failed to destroy {label}: {err}");
+            }
+        }
+    }
+}
+
+/// Raise the curtain. Shared by the command, the tray menu, and auto mode.
+/// Requires a password to be set. `force_wobble` distinguishes the two entry
+/// paths: a manual raise turns wobbling on so the session stays awake while
+/// covered; an auto-mode raise leaves it alone because auto mode is already
+/// wobbling. Either way the prior `is_manual` is snapshotted for restore.
+fn arm_curtain_inner<R: Runtime>(
+    app: &AppHandle<R>,
+    core: &SharedCore,
+    curtain: &CurtainState,
+    force_wobble: bool,
+) -> Result<(), String> {
+    if load_password_hash(app).is_none() {
+        return Err("Set a curtain password first".into());
+    }
+    if curtain.armed.swap(true, Ordering::SeqCst) {
+        return Ok(()); // already armed — idempotent
+    }
+
+    {
+        let mut c = core.lock().unwrap();
+        curtain.restore_manual.store(c.is_manual, Ordering::SeqCst);
+        if force_wobble {
+            c.is_manual = true;
+        }
+    }
+    update_tray_label(app, true);
+
+    if let Err(err) = spawn_curtain_windows(app) {
+        // Roll back fully so a partial failure never leaves us "armed" with no
+        // cover and a forced wobble the user didn't ask for.
+        curtain.armed.store(false, Ordering::SeqCst);
+        restore_wobble_after_curtain(core, curtain);
+        update_tray_label(app, core.lock().unwrap().is_manual);
+        close_curtain_windows(app);
+        return Err(err);
+    }
+
+    // Bring the app to the foreground so the curtain reliably captures the unlock
+    // keystrokes — important for the auto-arm path, where it may rise while the
+    // settings window (and the dock icon) is hidden. The dock icon sits behind the
+    // full-screen cover, so making it visible here is invisible to the user.
+    set_dock_icon_visible(app, true);
+    Ok(())
+}
+
 // ─── Background wobbler thread ────────────────────────────────────────────────
 
 pub fn start_wobbler_thread<R: tauri::Runtime>(core: SharedCore, app: AppHandle<R>) {
@@ -94,10 +314,11 @@ pub fn start_wobbler_thread<R: tauri::Runtime>(core: SharedCore, app: AppHandle<
                 Err(_) => continue,
             };
 
-            let (move_to, is_wobbling) = {
+            let (move_to, is_wobbling, is_manual, auto_arm_enabled) = {
                 let mut c = core.lock().unwrap();
                 let r = tick(&mut c, current);
-                (r.move_to, c.is_wobbling)
+                let auto_arm = c.settings.auto_mode && c.settings.curtain_auto_arm;
+                (r.move_to, c.is_wobbling, c.is_manual, auto_arm)
             };
 
             if let Some((tx, ty)) = move_to {
@@ -117,6 +338,29 @@ pub fn start_wobbler_thread<R: tauri::Runtime>(core: SharedCore, app: AppHandle<
                         ));
                     }
                 }
+            }
+
+            // Auto-arm: on the rising edge of an *auto* (non-manual) wobble, raise
+            // the curtain too — but only if enabled and a password is set. Window
+            // creation must happen on the main thread, so dispatch there. The
+            // rising-edge guard (`!prev_wobbling`) means unlocking while still idle
+            // does not immediately re-curtain.
+            if is_wobbling
+                && !prev_wobbling
+                && !is_manual
+                && auto_arm_enabled
+                && load_password_hash(&app).is_some()
+            {
+                let app_main = app.clone();
+                let core_main = core.clone();
+                let _ = app.run_on_main_thread(move || {
+                    let curtain = app_main.state::<CurtainState>();
+                    if let Err(err) =
+                        arm_curtain_inner(&app_main, &core_main, curtain.inner(), false)
+                    {
+                        eprintln!("auto-arm curtain failed: {err}");
+                    }
+                });
             }
 
             // Emit on a wobble-state change, or at most every STATUS_EMIT_INTERVAL,
@@ -155,6 +399,19 @@ fn update_tray_label<R: tauri::Runtime>(app: &AppHandle<R>, wobbling: bool) {
             "Mouse Wobbler"
         }));
     }
+}
+
+/// Show or hide the macOS dock icon so the app reads as a menu-bar utility: the
+/// icon appears while the settings window is open and disappears once it hides to
+/// the tray, instead of lingering in the dock. No-op off macOS, where there is no
+/// dock and the tray/taskbar already conveys presence.
+fn set_dock_icon_visible<R: tauri::Runtime>(app: &AppHandle<R>, visible: bool) {
+    #[cfg(target_os = "macos")]
+    if let Err(err) = app.set_dock_visibility(visible) {
+        eprintln!("failed to set dock visibility: {err}");
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, visible);
 }
 
 // ─── Tauri commands ───────────────────────────────────────────────────────────
@@ -208,6 +465,79 @@ fn toggle_wobble(core: tauri::State<SharedCore>, app: AppHandle) -> bool {
 fn update_settings(core: tauri::State<SharedCore>, app: AppHandle, settings: WobblerSettings) {
     core.lock().unwrap().settings = settings.clone();
     save_settings(&app, &settings);
+}
+
+// ─── Curtain commands ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn has_curtain_password(app: AppHandle) -> bool {
+    load_password_hash(&app).is_some()
+}
+
+#[tauri::command]
+fn set_curtain_password(app: AppHandle, password: String) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("Password cannot be empty".into());
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| format!("hashing failed: {e}"))?
+        .to_string();
+    store_password_hash(&app, Some(&hash))
+}
+
+#[tauri::command]
+fn clear_curtain_password(app: AppHandle, curtain: State<CurtainState>) -> Result<(), String> {
+    // Clearing while armed would strip the only way back in — refuse it.
+    if curtain.armed.load(Ordering::SeqCst) {
+        return Err("Disarm the curtain before removing the password".into());
+    }
+    store_password_hash(&app, None)
+}
+
+#[tauri::command]
+fn arm_curtain(
+    app: AppHandle,
+    core: State<SharedCore>,
+    curtain: State<CurtainState>,
+) -> Result<(), String> {
+    // Manual raise from the UI button: force wobbling on to keep the session awake.
+    arm_curtain_inner(&app, core.inner(), curtain.inner(), true)
+}
+
+/// Verify the supplied password against the stored Argon2id hash. Returns
+/// `Ok(true)` and lowers the curtain on a match, `Ok(false)` on a wrong password
+/// (the curtain stays up), and `Err` only on an internal/storage fault.
+#[tauri::command]
+fn unlock_curtain(
+    app: AppHandle,
+    core: State<SharedCore>,
+    curtain: State<CurtainState>,
+    password: String,
+) -> Result<bool, String> {
+    let stored = load_password_hash(&app).ok_or_else(|| "no curtain password set".to_string())?;
+    let parsed = PasswordHash::new(&stored).map_err(|e| format!("stored hash invalid: {e}"))?;
+    let unlocked = Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok();
+
+    if unlocked {
+        curtain.armed.store(false, Ordering::SeqCst);
+        restore_wobble_after_curtain(core.inner(), curtain.inner());
+        update_tray_label(&app, core.lock().unwrap().is_manual);
+        close_curtain_windows(&app);
+
+        // Restore the dock icon to match the settings window: keep it if the
+        // window is open, hide it again if the curtain was armed from the tray
+        // with the window tucked away.
+        let main_visible = app
+            .get_webview_window("main")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        set_dock_icon_visible(&app, main_visible);
+    }
+    Ok(unlocked)
 }
 
 #[tauri::command]
@@ -267,6 +597,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .manage(core.clone())
+        .manage(CurtainState::default())
         .setup(move |app| {
             // Restore persisted settings before the wobbler thread reads them, so
             // the very first tick already honours the user's saved configuration.
@@ -279,6 +610,7 @@ pub fn run() {
 
             let menu = MenuBuilder::new(app)
                 .text("toggle", "Start Wobbling")
+                .text("curtain", "Lock Screen (Curtain)")
                 .text("show", "Open Settings")
                 .separator()
                 .text("quit", "Quit")
@@ -324,8 +656,24 @@ pub fn run() {
                             update_tray_label(&app_handle, wobbling);
                             let _ = app_handle.emit("shortcut-toggled", wobbling);
                         }
+                        "curtain" => {
+                            let curtain = app_handle.state::<CurtainState>();
+                            if let Err(err) =
+                                arm_curtain_inner(&app_handle, &core_ref, curtain.inner(), true)
+                            {
+                                // Most likely "no password set" — open Settings so
+                                // the user sees why nothing happened.
+                                eprintln!("arm curtain from tray failed: {err}");
+                                if let Some(w) = app_handle.get_webview_window("main") {
+                                    set_dock_icon_visible(&app_handle, true);
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
+                            }
+                        }
                         "show" => {
                             if let Some(w) = app_handle.get_webview_window("main") {
+                                set_dock_icon_visible(&app_handle, true);
                                 let _ = w.show();
                                 let _ = w.set_focus();
                             }
@@ -345,7 +693,9 @@ pub fn run() {
                         if let Some(w) = app.get_webview_window("main") {
                             if w.is_visible().unwrap_or(false) {
                                 let _ = w.hide();
+                                set_dock_icon_visible(app, false);
                             } else {
+                                set_dock_icon_visible(app, true);
                                 let _ = w.show();
                                 let _ = w.set_focus();
                             }
@@ -362,6 +712,7 @@ pub fn run() {
                         api.prevent_close();
                         if let Some(w) = handle.get_webview_window("main") {
                             let _ = w.hide();
+                            set_dock_icon_visible(&handle, false);
                         }
                     }
                 });
@@ -376,6 +727,11 @@ pub fn run() {
             toggle_wobble,
             update_settings,
             register_shortcut,
+            has_curtain_password,
+            set_curtain_password,
+            clear_curtain_password,
+            arm_curtain,
+            unlock_curtain,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

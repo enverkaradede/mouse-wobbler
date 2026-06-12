@@ -7,13 +7,14 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="app">
-    <!-- Header -->
-    <header>
-      <div class="header-icon">🖱️</div>
-      <h1>Mouse Wobbler</h1>
-    </header>
+  <!-- Fixed top bar: stays put so scrolling content can never slide up under
+       the native title bar / traffic-light buttons. -->
+  <header>
+    <div class="header-icon">🖱️</div>
+    <h1>Mouse Wobbler</h1>
+  </header>
 
+  <main class="scroll">
     <!-- Error banner -->
     <div id="error-banner" class="error-banner hidden">
       <span id="error-text"></span>
@@ -98,7 +99,63 @@
       </div>
       <p id="shortcut-hint" class="hint">Press a key combo while the field is focused.</p>
     </div>
-  </div>
+
+    <!-- Privacy curtain -->
+    <div class="card">
+      <div class="card-title">Privacy Curtain</div>
+      <p class="hint curtain-disclaimer">
+        A full-screen cover with a password to dismiss it. Hides your screen from
+        passers-by while the wobbler keeps your session awake.
+        <strong>This is not a system lock</strong> — it can be bypassed
+        (force-quit, OS shortcuts, remote access) and does not replace locking
+        your computer.
+      </p>
+
+      <!-- Shown when no password is set yet, and when changing the password -->
+      <div id="curtain-setup">
+        <div class="setting-row">
+          <label>Password</label>
+          <div class="slider-group">
+            <input type="password" id="curtain-pw" class="curtain-pw-input"
+              placeholder="Password" autocomplete="off" spellcheck="false" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>Confirm</label>
+          <div class="slider-group">
+            <input type="password" id="curtain-pw2" class="curtain-pw-input"
+              placeholder="Re-enter password" autocomplete="off" spellcheck="false" />
+          </div>
+        </div>
+        <div class="curtain-setup-actions">
+          <button class="main-btn" onclick="handleSetCurtainPassword()">Save password</button>
+          <button id="curtain-cancel-btn" class="link-btn hidden" onclick="handleCancelChangePassword()">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <!-- Shown once a password exists -->
+      <div id="curtain-active" class="hidden">
+        <button id="arm-curtain-btn" class="main-btn" onclick="handleArmCurtain()">
+          Cover Screen Now
+        </button>
+        <div class="curtain-toggle-row">
+          <span class="curtain-toggle-label">Auto-cover when auto mode starts</span>
+          <label class="toggle">
+            <input type="checkbox" id="curtain-auto-toggle" onchange="handleCurtainAutoToggle()" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="curtain-actions">
+          <button class="link-btn" onclick="showChangeCurtainPassword()">Change password</button>
+          <button class="link-btn danger" onclick="handleClearCurtainPassword()">Remove password</button>
+        </div>
+      </div>
+
+      <p id="curtain-hint" class="hint"></p>
+    </div>
+  </main>
 
   <script src="main.js"></script>
 </body>

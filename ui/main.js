@@ -89,6 +89,7 @@ function seedControls(settings) {
   intervalInput.value = settings.wobble_interval_ms;
   radiusSlider.value = settings.wobble_radius;
   radiusInput.value = settings.wobble_radius;
+  curtainAutoToggle.checked = settings.curtain_auto_arm;
 }
 
 // Clamp a typed value to its slider's min/max and snap to the slider's step.
@@ -174,6 +175,7 @@ async function pushSettings() {
     idle_threshold_secs:  Number(idleSlider.value),
     wobble_interval_ms:   Number(intervalSlider.value),
     wobble_radius:        Number(radiusSlider.value),
+    curtain_auto_arm:     curtainAutoToggle.checked,
   };
   try {
     await invoke("update_settings", { settings });
@@ -288,6 +290,104 @@ function renderShortcutDisplay(shortcut) {
     .join(" + ");
 }
 
+// ── Privacy curtain ─────────────────────────────────────────────────────────────
+const curtainSetup     = document.getElementById("curtain-setup");
+const curtainActive    = document.getElementById("curtain-active");
+const curtainPw        = document.getElementById("curtain-pw");
+const curtainPw2       = document.getElementById("curtain-pw2");
+const curtainCancelBtn = document.getElementById("curtain-cancel-btn");
+const curtainAutoToggle = document.getElementById("curtain-auto-toggle");
+const curtainHint      = document.getElementById("curtain-hint");
+
+function clearCurtainInputs() {
+  curtainPw.value = "";
+  curtainPw2.value = "";
+}
+
+// Switch between the "set a password" view and the "armed controls" view based
+// on whether the backend already holds a password. Always resets the setup form
+// to its first-run state (cleared inputs, no Cancel button).
+async function refreshCurtainUI() {
+  if (!invoke) return;
+  try {
+    const hasPassword = await invoke("has_curtain_password");
+    curtainSetup.classList.toggle("hidden", hasPassword);
+    curtainActive.classList.toggle("hidden", !hasPassword);
+    curtainCancelBtn.classList.add("hidden");
+    clearCurtainInputs();
+  } catch (e) {
+    console.error("has_curtain_password failed:", e);
+  }
+}
+
+async function handleSetCurtainPassword() {
+  const password = curtainPw.value;
+  const confirm = curtainPw2.value;
+  if (!password) {
+    curtainHint.textContent = "Enter a password first.";
+    return;
+  }
+  if (password !== confirm) {
+    curtainHint.textContent = "Passwords do not match.";
+    curtainPw2.value = "";
+    curtainPw2.focus();
+    return;
+  }
+  try {
+    await invoke("set_curtain_password", { password });
+    curtainHint.textContent = "Password saved.";
+    await refreshCurtainUI();
+  } catch (e) {
+    curtainHint.textContent = `Error: ${e}`;
+    console.error("set_curtain_password failed:", e);
+  }
+}
+
+// Reveal the password fields again so the user can overwrite the stored one.
+// A Cancel button appears here (but not on first-run setup) so the user can back
+// out without changing anything.
+function showChangeCurtainPassword() {
+  curtainSetup.classList.remove("hidden");
+  curtainActive.classList.add("hidden");
+  curtainCancelBtn.classList.remove("hidden");
+  clearCurtainInputs();
+  curtainHint.textContent = "Enter a new password to replace the current one.";
+  curtainPw.focus();
+}
+
+// Back out of the change-password flow, leaving the existing password intact.
+function handleCancelChangePassword() {
+  curtainHint.textContent = "";
+  refreshCurtainUI();
+}
+
+async function handleClearCurtainPassword() {
+  try {
+    await invoke("clear_curtain_password");
+    curtainHint.textContent = "Password removed.";
+    await refreshCurtainUI();
+  } catch (e) {
+    curtainHint.textContent = `Error: ${e}`;
+    console.error("clear_curtain_password failed:", e);
+  }
+}
+
+async function handleArmCurtain() {
+  try {
+    await invoke("arm_curtain");
+    curtainHint.textContent = "";
+  } catch (e) {
+    curtainHint.textContent = `Error: ${e}`;
+    console.error("arm_curtain failed:", e);
+  }
+}
+
+// The auto-cover preference rides along in WobblerSettings, so persist it through
+// the same settings push as the sliders.
+function handleCurtainAutoToggle() {
+  pushSettings();
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   if (!TAURI) return;
@@ -318,6 +418,8 @@ async function init() {
   } catch (e) {
     console.error("get_status failed:", e);
   }
+
+  await refreshCurtainUI();
 }
 
 init();
