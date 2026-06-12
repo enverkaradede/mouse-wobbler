@@ -148,6 +148,10 @@ fn spawn_curtain_windows<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
                 .decorations(false)
                 .always_on_top(true)
                 .skip_taskbar(true)
+                // A curtain the user can resize, drag, or minimise is no curtain.
+                .resizable(false)
+                .maximizable(false)
+                .minimizable(false)
                 .visible(false)
                 .build()
                 .map_err(|e| e.to_string())?;
@@ -174,6 +178,16 @@ fn spawn_curtain_windows<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         });
 
         window.show().map_err(|e| e.to_string())?;
+
+        // On Windows a borderless window is still an ordinary, movable/resizable
+        // window that can be dragged aside to peek behind the curtain. Borderless
+        // fullscreen locks it to the entire monitor — unmovable, unresizable, and
+        // covering the taskbar too. macOS already covers fully via the sized
+        // borderless window above; going fullscreen there would spawn a separate
+        // Space and break the cross-Space behaviour we rely on.
+        #[cfg(target_os = "windows")]
+        window.set_fullscreen(true).map_err(|e| e.to_string())?;
+
         // Span every virtual desktop only after the window is realised so its
         // native handle exists (the Windows pin needs a valid HWND).
         cover_all_desktops(&window);
