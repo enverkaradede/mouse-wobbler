@@ -1,6 +1,6 @@
 [package]
 name = "mouse-wobbler"
-version = "0.1.0"
+version = "0.2.0"
 description = "Mouse Wobbler – keep your session alive"
 authors = []
 edition = "2021"
