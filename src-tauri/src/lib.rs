@@ -7,8 +7,56 @@ use mouse_wobbler_core::{tick, AppStatus, SharedCore, WobblerCore, WobblerSettin
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, WindowEvent,
+    AppHandle, Emitter, Manager, Runtime, WindowEvent,
 };
+use tauri_plugin_store::StoreExt;
+
+// ─── Persistence ──────────────────────────────────────────────────────────────
+// Settings are the only thing that needs to outlive a process restart today, so
+// a flat key/value store (not a database) is the right altitude. The store file
+// lives in the OS app-data dir; the plugin handles the platform-specific path.
+
+const SETTINGS_STORE: &str = "settings.json";
+const SETTINGS_KEY: &str = "settings";
+
+/// Read persisted settings, or `None` if nothing is saved yet (first run) or the
+/// stored value is unreadable. A corrupt entry must not abort startup — we log it
+/// and fall back to defaults so the app always launches.
+fn load_settings<R: Runtime>(app: &AppHandle<R>) -> Option<WobblerSettings> {
+    let store = app.store(SETTINGS_STORE).ok()?;
+    let value = store.get(SETTINGS_KEY)?;
+    match serde_json::from_value::<WobblerSettings>(value) {
+        Ok(settings) => Some(settings),
+        Err(err) => {
+            eprintln!("ignoring corrupt persisted settings: {err}");
+            None
+        }
+    }
+}
+
+/// Persist settings best-effort. A failure to write must not break the live
+/// session, so every fallible step is logged at the boundary rather than
+/// propagated up into the command path.
+fn save_settings<R: Runtime>(app: &AppHandle<R>, settings: &WobblerSettings) {
+    let store = match app.store(SETTINGS_STORE) {
+        Ok(store) => store,
+        Err(err) => {
+            eprintln!("cannot open settings store for write: {err}");
+            return;
+        }
+    };
+    let value = match serde_json::to_value(settings) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("cannot serialise settings: {err}");
+            return;
+        }
+    };
+    store.set(SETTINGS_KEY, value);
+    if let Err(err) = store.save() {
+        eprintln!("cannot persist settings: {err}");
+    }
+}
 
 // ─── Background wobbler thread ────────────────────────────────────────────────
 
@@ -157,8 +205,9 @@ fn toggle_wobble(core: tauri::State<SharedCore>, app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn update_settings(core: tauri::State<SharedCore>, settings: WobblerSettings) {
-    core.lock().unwrap().settings = settings;
+fn update_settings(core: tauri::State<SharedCore>, app: AppHandle, settings: WobblerSettings) {
+    core.lock().unwrap().settings = settings.clone();
+    save_settings(&app, &settings);
 }
 
 #[tauri::command]
@@ -216,8 +265,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .manage(core.clone())
         .setup(move |app| {
+            // Restore persisted settings before the wobbler thread reads them, so
+            // the very first tick already honours the user's saved configuration.
+            if let Some(persisted) = load_settings(app.handle()) {
+                core.lock().unwrap().settings = persisted;
+            }
+
             let app_handle = app.handle().clone();
             start_wobbler_thread(core.clone(), app_handle);
 

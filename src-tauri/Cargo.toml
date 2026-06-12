@@ -16,5 +16,6 @@ tauri-build = { version = "2", features = [] }
 mouse-wobbler-core = { path = "../core" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-store = "2"
 serde_json = "1"
 enigo = { version = "0.2", default-features = true }
