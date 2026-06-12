@@ -17,6 +17,8 @@ use tauri::{
 };
 use tauri_plugin_store::StoreExt;
 
+mod wallpaper;
+
 // ─── Persistence ──────────────────────────────────────────────────────────────
 // Settings are the only thing that needs to outlive a process restart today, so
 // a flat key/value store (not a database) is the right altitude. The store file
@@ -612,12 +614,17 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .manage(core.clone())
         .manage(CurtainState::default())
+        .manage(wallpaper::WallpaperCache::default())
         .setup(move |app| {
             // Restore persisted settings before the wobbler thread reads them, so
             // the very first tick already honours the user's saved configuration.
             if let Some(persisted) = load_settings(app.handle()) {
                 core.lock().unwrap().settings = persisted;
             }
+
+            // Warm the curtain wallpaper cache (loads any on-disk images now,
+            // refreshes from NASA in the background).
+            wallpaper::init(app.handle());
 
             let app_handle = app.handle().clone();
             start_wobbler_thread(core.clone(), app_handle);
@@ -746,6 +753,7 @@ pub fn run() {
             clear_curtain_password,
             arm_curtain,
             unlock_curtain,
+            wallpaper::get_curtain_wallpaper,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
