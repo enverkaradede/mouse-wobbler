@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body class="curtain-body">
+  <!-- Live space wallpaper (NASA APOD), faded in over the gradient once loaded.
+       Empty/hidden until curtain.js fetches one; gradient is the fallback. -->
+  <img id="wallpaper" class="curtain-wallpaper" alt="" />
+  <div class="curtain-scrim"></div>
+
   <div class="curtain">
     <div class="curtain-icon">🔒</div>
     <h1 class="curtain-title">Screen Covered</h1>
@@ -26,6 +31,9 @@
 
     <p id="error" class="curtain-error" role="alert"></p>
   </div>
+
+  <!-- Image credit / attribution, shown only when a wallpaper loads. -->
+  <p id="wallpaper-credit" class="curtain-credit"></p>
 
   <script src="curtain.js"></script>
 </body>
